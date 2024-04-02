@@ -1,12 +1,21 @@
 import telebot
-from telebot import types
+from datetime import datetime
 from requests import get
-import json
+from data import db_session
+from data.users import User
+from data.tasks import Task
 from PIL import ImageDraw, Image
+import sqlalchemy
+from apscheduler.schedulers.background import BackgroundScheduler
 
 bot = telebot.TeleBot("6325848689:AAEK_VjDa2zVp3p-vycNft5wdj1zkfixBpE")
 
 API_KEY = "2c08d217e8519012256028a1f119b4c2"
+
+db_session.global_init("db/weather_bot.db")
+
+scheduler = BackgroundScheduler()
+scheduler.start()
 
 WIDTH = 1686
 HEIGHT = 3000
@@ -27,8 +36,23 @@ PICTURES_OF_WEATHER = {
 }
 
 
-def give_current_weather(res):
+def check_city(city):
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
+    res = get(url).json()
+    ans = False
+
+    if res["cod"] == 200:
+        ans = True
+
+    return ans
+
+
+def give_current_weather(city):
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
+    res = get(url).json()
+
     print(res)
+
     city = res["name"]
     condition = res["weather"][0]["main"]
     pic = res["weather"][0]["icon"]
@@ -88,20 +112,122 @@ def give_current_weather(res):
     return image
 
 
+def send_weather(city, chat_id):
+    current_weather = give_current_weather(city)
+    bot.send_photo(chat_id, current_weather)
+
+
+def my_subscriptions(chat_id):
+    db_sess = db_session.create_session()
+    result = {}
+    count = 1
+
+    for task in db_sess.query(Task).filter(Task.user_id == chat_id).order_by(Task.city):
+        result[task.id] = f"{count}. {task.city} / {task.time}"
+        count += 1
+
+    return result
+
+
 @bot.message_handler(commands=['start'])
 def start_bot(message):
     welcome_text = "Some welcome text"
     bot.send_message(message.chat.id, welcome_text)
 
+    try:
+        user = User()
+        user.username = message.from_user.username
+        user.user_tg_id = message.chat.id
+        db_sess = db_session.create_session()
+        db_sess.add(user)
+        db_sess.commit()
+
+    except sqlalchemy.exc.IntegrityError:
+        pass
+
+
+@bot.message_handler(commands=['subscriptions'])
+def send_subscriptions(message):
+    subscriptions = my_subscriptions(message.chat.id)
+    sub_str = "\n".join(subscriptions.values())
+
+    subs_message = f"Your current subscriptions:\n" \
+                   f"\n" \
+                   f"{sub_str}"
+
+    bot.send_message(message.chat.id, subs_message)
+
+
+@bot.message_handler(commands=['delete'])
+def delete_subscriptions(message):
+    send_subscriptions(message)
+
+
+@bot.message_handler(commands=['set'])
+def city_selection(message):
+    city_text = "select some city"
+    bot.send_message(message.chat.id, city_text)
+    bot.register_next_step_handler(message, time_selection)
+
+
+def time_selection(message):
+    city = message.text
+
+    if check_city(city):
+        time_text = "select your time"
+        bot.send_message(message.chat.id, time_text)
+        bot.register_next_step_handler(message, set_notifications, city)
+
+    else:
+        error_text = "error city"
+        bot.send_message(message.chat.id, error_text)
+        bot.register_next_step_handler(message, time_selection)
+
+
+def set_notifications(message, city):
+    time = message.text
+    split_time = time.split(":")
+    print(split_time)
+    if (":" not in time) or len(time) != 5 or not time[0].isdigit() or not time[1].isdigit() or not time[
+        3].isdigit() or not time[4].isdigit() or not (0 <= int(split_time[0]) <= 23) or not (
+            0 <= int(split_time[1]) <= 59):
+        error_text = "error time"
+        bot.send_message(message.chat.id, error_text)
+        bot.register_next_step_handler(message, set_notifications, city)
+
+    else:
+        success_text = "success"
+        bot.send_message(message.chat.id, success_text)
+
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
+        res = get(url).json()
+
+        city = res["name"]
+        print(city, time)
+
+        hour = time.split(":")[0]
+        minute = time.split(":")[1]
+
+        task = Task()
+        task.city = city
+        task.time = time
+        task.user_id = message.chat.id
+        db_sess = db_session.create_session()
+        db_sess.add(task)
+        db_sess.commit()
+
+        scheduler.add_job(send_weather,
+                          trigger="cron",
+                          hour=hour,
+                          minute=minute,
+                          start_date=datetime.now(),
+                          kwargs={"city": city, "chat_id": message.chat.id})
+
 
 @bot.message_handler(content_types=["text"])
 def user_message(message):
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={message.text}&appid={API_KEY}&units=metric"
-    response = get(url).json()
-
-    if response["cod"] == 200:
-        current_weather = give_current_weather(response)
-        bot.send_photo(message.chat.id, current_weather)
+    if check_city(message.text):
+        send_weather(message.text, message.chat.id)
 
     else:
         error_message = "Some error text"

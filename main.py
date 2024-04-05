@@ -122,8 +122,8 @@ def my_subscriptions(chat_id):
     result = {}
     count = 1
 
-    for task in db_sess.query(Task).filter(Task.user_id == chat_id).order_by(Task.city):
-        result[task.id] = f"{count}. {task.city} / {task.time}"
+    for task in db_sess.query(Task).filter(Task.user_tg_id == chat_id).order_by(Task.city):
+        result[count] = [count, task.city, task.time]
         count += 1
 
     return result
@@ -141,6 +141,7 @@ def start_bot(message):
         db_sess = db_session.create_session()
         db_sess.add(user)
         db_sess.commit()
+        print("note in users")
 
     except sqlalchemy.exc.IntegrityError:
         pass
@@ -149,18 +150,47 @@ def start_bot(message):
 @bot.message_handler(commands=['subscriptions'])
 def send_subscriptions(message):
     subscriptions = my_subscriptions(message.chat.id)
-    sub_str = "\n".join(subscriptions.values())
+
+    sub_list = subscriptions.values()
+    sub_res = []
+    for item in sub_list:
+        sub_res.append(f"{item[0]}. {item[1]} / {item[2]}")
+    sub_str = "\n".join(sub_res)
 
     subs_message = f"Your current subscriptions:\n" \
                    f"\n" \
                    f"{sub_str}"
 
     bot.send_message(message.chat.id, subs_message)
+    return subscriptions
 
 
 @bot.message_handler(commands=['delete'])
-def delete_subscriptions(message):
-    send_subscriptions(message)
+def delete_subscriptions_beginning(message):
+    subscriptions = send_subscriptions(message)
+
+    delete_text = "Some delete text"
+    bot.send_message(message.chat.id, delete_text)
+
+    bot.register_next_step_handler(message, delete_subscriptions, subscriptions)
+
+
+def delete_subscriptions(message, subscriptions):
+    nums = message.text.split(",")
+    print(subscriptions)
+
+    for num in nums:
+        list_for_id = subscriptions[int(num)]
+
+        task_id = f"{message.chat.id}{list_for_id[1]}{list_for_id[2]}"
+
+        db_sess = db_session.create_session()
+        task = db_sess.query(Task).filter(Task.user_tg_id == message.chat.id, Task.city == list_for_id[1],
+                                          Task.time == list_for_id[2]).first()
+        db_sess.delete(task)
+        db_sess.commit()
+
+        scheduler.remove_job(task_id)
 
 
 @bot.message_handler(commands=['set'])
@@ -211,7 +241,7 @@ def set_notifications(message, city):
         task = Task()
         task.city = city
         task.time = time
-        task.user_id = message.chat.id
+        task.user_tg_id = message.chat.id
         db_sess = db_session.create_session()
         db_sess.add(task)
         db_sess.commit()
@@ -221,7 +251,9 @@ def set_notifications(message, city):
                           hour=hour,
                           minute=minute,
                           start_date=datetime.now(),
-                          kwargs={"city": city, "chat_id": message.chat.id})
+                          kwargs={"city": city, "chat_id": message.chat.id},
+                          id=f"{message.chat.id}{city}{time}")
+        print(f"{message.chat.id}{city}{time}")
 
 
 @bot.message_handler(content_types=["text"])

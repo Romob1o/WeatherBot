@@ -2,6 +2,7 @@ import telebot
 from datetime import datetime
 from requests import get
 from data import db_session
+from data.messages import CONST_MSGS
 from data.users import User
 from data.tasks import Task
 from PIL import ImageDraw, Image
@@ -129,10 +130,22 @@ def my_subscriptions(chat_id):
     return result
 
 
+db_sess = db_session.create_session()
+for task in db_sess.query(Task).all():
+    scheduler.add_job(send_weather,
+                      trigger="cron",
+                      hour=task.time.split(":")[0],
+                      minute=task.time.split(":")[1],
+                      start_date=datetime.now(),
+                      kwargs={"city": task.city, "chat_id": task.user_tg_id},
+                      id=f"{task.user_tg_id}{task.city}{task.time}")
+
+print(scheduler.get_jobs())
+
+
 @bot.message_handler(commands=['start'])
 def start_bot(message):
-    welcome_text = "Some welcome text"
-    bot.send_message(message.chat.id, welcome_text)
+    bot.send_message(message.chat.id, CONST_MSGS["greeting_text"])
 
     try:
         user = User()
@@ -141,10 +154,9 @@ def start_bot(message):
         db_sess = db_session.create_session()
         db_sess.add(user)
         db_sess.commit()
-        print("note in users")
 
     except sqlalchemy.exc.IntegrityError:
-        pass
+        return
 
 
 @bot.message_handler(commands=['subscriptions'])
@@ -157,11 +169,15 @@ def send_subscriptions(message):
         sub_res.append(f"{item[0]}. {item[1]} / {item[2]}")
     sub_str = "\n".join(sub_res)
 
-    subs_message = f"Your current subscriptions:\n" \
-                   f"\n" \
-                   f"{sub_str}"
+    if len(sub_list) == 0:
+        bot.send_message(message.chat.id, CONST_MSGS["no_subs_text"])
 
-    bot.send_message(message.chat.id, subs_message)
+    else:
+        subs_text = f"Your current subscriptions:\n" \
+                       f"\n" \
+                       f"{sub_str}"
+        bot.send_message(message.chat.id, subs_text)
+
     return subscriptions
 
 
@@ -169,34 +185,44 @@ def send_subscriptions(message):
 def delete_subscriptions_beginning(message):
     subscriptions = send_subscriptions(message)
 
-    delete_text = "Some delete text"
-    bot.send_message(message.chat.id, delete_text)
+    if len(subscriptions.values()) == 0:
+        return
+
+    bot.send_message(message.chat.id, CONST_MSGS["deletion_text"])
 
     bot.register_next_step_handler(message, delete_subscriptions, subscriptions)
 
 
 def delete_subscriptions(message, subscriptions):
-    nums = message.text.split(",")
-    print(subscriptions)
+    try:
+        list_for_id = subscriptions[int(message.text)]
 
-    for num in nums:
-        list_for_id = subscriptions[int(num)]
+    except ValueError:
+        bot.send_message(message.chat.id, CONST_MSGS["deletion_value_error_text"])
+        bot.register_next_step_handler(message, delete_subscriptions, subscriptions)
+        return
 
-        task_id = f"{message.chat.id}{list_for_id[1]}{list_for_id[2]}"
+    except KeyError:
+        bot.send_message(message.chat.id, CONST_MSGS["deletion_num_error_text"])
+        bot.register_next_step_handler(message, delete_subscriptions, subscriptions)
+        return
 
-        db_sess = db_session.create_session()
-        task = db_sess.query(Task).filter(Task.user_tg_id == message.chat.id, Task.city == list_for_id[1],
-                                          Task.time == list_for_id[2]).first()
-        db_sess.delete(task)
-        db_sess.commit()
+    task_id = f"{message.chat.id}{list_for_id[1]}{list_for_id[2]}"
 
-        scheduler.remove_job(task_id)
+    db_sess = db_session.create_session()
+    task = db_sess.query(Task).filter(Task.user_tg_id == message.chat.id, Task.city == list_for_id[1],
+                                      Task.time == list_for_id[2]).first()
+    db_sess.delete(task)
+    db_sess.commit()
+
+    scheduler.remove_job(task_id)
+
+    bot.send_message(message.chat.id, CONST_MSGS["deletion_success_text"])
 
 
 @bot.message_handler(commands=['set'])
 def city_selection(message):
-    city_text = "select some city"
-    bot.send_message(message.chat.id, city_text)
+    bot.send_message(message.chat.id, CONST_MSGS["city_selection_text"])
     bot.register_next_step_handler(message, time_selection)
 
 
@@ -204,36 +230,29 @@ def time_selection(message):
     city = message.text
 
     if check_city(city):
-        time_text = "select your time"
-        bot.send_message(message.chat.id, time_text)
+        bot.send_message(message.chat.id, CONST_MSGS["time_selection_text"])
         bot.register_next_step_handler(message, set_notifications, city)
 
     else:
-        error_text = "error city"
-        bot.send_message(message.chat.id, error_text)
+        bot.send_message(message.chat.id, CONST_MSGS["city_selection_error_text"])
         bot.register_next_step_handler(message, time_selection)
 
 
 def set_notifications(message, city):
     time = message.text
     split_time = time.split(":")
-    print(split_time)
+
     if (":" not in time) or len(time) != 5 or not time[0].isdigit() or not time[1].isdigit() or not time[
         3].isdigit() or not time[4].isdigit() or not (0 <= int(split_time[0]) <= 23) or not (
             0 <= int(split_time[1]) <= 59):
-        error_text = "error time"
-        bot.send_message(message.chat.id, error_text)
+
+        bot.send_message(message.chat.id, CONST_MSGS["time_selection_error_text"])
         bot.register_next_step_handler(message, set_notifications, city)
 
     else:
-        success_text = "success"
-        bot.send_message(message.chat.id, success_text)
-
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
         res = get(url).json()
-
         city = res["name"]
-        print(city, time)
 
         hour = time.split(":")[0]
         minute = time.split(":")[1]
@@ -242,18 +261,24 @@ def set_notifications(message, city):
         task.city = city
         task.time = time
         task.user_tg_id = message.chat.id
-        db_sess = db_session.create_session()
-        db_sess.add(task)
-        db_sess.commit()
 
-        scheduler.add_job(send_weather,
-                          trigger="cron",
-                          hour=hour,
-                          minute=minute,
-                          start_date=datetime.now(),
-                          kwargs={"city": city, "chat_id": message.chat.id},
-                          id=f"{message.chat.id}{city}{time}")
-        print(f"{message.chat.id}{city}{time}")
+        try:
+            db_sess = db_session.create_session()
+            db_sess.add(task)
+            db_sess.commit()
+
+            scheduler.add_job(send_weather,
+                              trigger="cron",
+                              hour=hour,
+                              minute=minute,
+                              start_date=datetime.now(),
+                              kwargs={"city": city, "chat_id": message.chat.id},
+                              id=f"{message.chat.id}{city}{time}")
+
+            bot.send_message(message.chat.id, CONST_MSGS["set_success_text"])
+
+        except sqlalchemy.exc.IntegrityError:
+            bot.send_message(message.chat.id, CONST_MSGS["set_error_text"])
 
 
 @bot.message_handler(content_types=["text"])
@@ -262,8 +287,7 @@ def user_message(message):
         send_weather(message.text, message.chat.id)
 
     else:
-        error_message = "Some error text"
-        bot.send_message(message.chat.id, error_message)
+        bot.send_message(message.chat.id, CONST_MSGS["city_selection_error_text"])
 
 
 bot.infinity_polling()

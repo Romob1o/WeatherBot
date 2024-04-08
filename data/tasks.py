@@ -11,8 +11,4 @@ class Task(SqlAlchemyBase):
     city = sqlalchemy.Column(sqlalchemy.String, primary_key=True)
     time = sqlalchemy.Column(sqlalchemy.String, primary_key=True)
 
-    # sqlalchemy.schema.ForeignKeyConstraint(
-    #     ["user_tg_id"], ["users.user_tg_id"], name="foreign_key"
-    # )
-
     user = orm.relationship('User')

@@ -36,6 +36,11 @@ PICTURES_OF_WEATHER = {
     "50": "03"
 }
 
+commands = {"/start": "start_bot",
+            "/set": "city_selection",
+            "/subscriptions": "send_subscriptions",
+            "/delete": "delete_subscriptions_beginning"}
+
 
 def check_city(city):
     url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={API_KEY}&units=metric"
@@ -130,6 +135,11 @@ def my_subscriptions(chat_id):
     return result
 
 
+def check_cmd_and_run(text):
+    if text in commands.keys():
+        return True
+
+
 db_sess = db_session.create_session()
 for task in db_sess.query(Task).all():
     scheduler.add_job(send_weather,
@@ -174,8 +184,8 @@ def send_subscriptions(message):
 
     else:
         subs_text = f"Your current subscriptions:\n" \
-                       f"\n" \
-                       f"{sub_str}"
+                    f"\n" \
+                    f"{sub_str}"
         bot.send_message(message.chat.id, subs_text)
 
     return subscriptions
@@ -194,6 +204,11 @@ def delete_subscriptions_beginning(message):
 
 
 def delete_subscriptions(message, subscriptions):
+    if check_cmd_and_run(message.text):
+        func = globals()[commands[message.text]]
+        func(message)
+        return
+
     try:
         list_for_id = subscriptions[int(message.text)]
 
@@ -227,6 +242,11 @@ def city_selection(message):
 
 
 def time_selection(message):
+    if check_cmd_and_run(message.text):
+        func = globals()[commands[message.text]]
+        func(message)
+        return
+
     city = message.text
 
     if check_city(city):
@@ -239,6 +259,11 @@ def time_selection(message):
 
 
 def set_notifications(message, city):
+    if check_cmd_and_run(message.text):
+        func = globals()[commands[message.text]]
+        func(message)
+        return
+
     time = message.text
     split_time = time.split(":")
 

@@ -204,8 +204,8 @@ def delete_subscriptions_beginning(message):
 
 
 def delete_subscriptions(message, subscriptions):
-    if check_cmd_and_run(message.text):
-        func = globals()[commands[message.text]]
+    if check_cmd_and_run(message.text.split()[0]):
+        func = globals()[commands[message.text.split()[0]]]
         func(message)
         return
 
@@ -242,8 +242,8 @@ def city_selection(message):
 
 
 def time_selection(message):
-    if check_cmd_and_run(message.text):
-        func = globals()[commands[message.text]]
+    if check_cmd_and_run(message.text.split()[0]):
+        func = globals()[commands[message.text.split()[0]]]
         func(message)
         return
 
@@ -259,8 +259,8 @@ def time_selection(message):
 
 
 def set_notifications(message, city):
-    if check_cmd_and_run(message.text):
-        func = globals()[commands[message.text]]
+    if check_cmd_and_run(message.text.split()[0]):
+        func = globals()[commands[message.text.split()[0]]]
         func(message)
         return
 
